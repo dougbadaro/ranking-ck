@@ -1,6 +1,5 @@
 import time
 import logging
-import pandas as pd
 import json
 import re
 from datetime import datetime
@@ -12,6 +11,7 @@ from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from webdriver_manager.chrome import ChromeDriverManager
+from webdriver_manager.core.os_manager import ChromeType
 
 # ─── CONFIGURAÇÕES GERAIS ─────────────────────────────────────────────────────
 EMAIL             = "marcos.barnabe2014@gmail.com"
@@ -20,7 +20,6 @@ INTERVALO_SLIDE   = 10000   # ms entre slides no HTML
 TEMPO_ATUALIZACAO = 300     # segundos entre coletas
 # ──────────────────────────────────────────────────────────────────────────────
 
-# Configuração profissional de logs
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s [%(levelname)s] %(message)s',
@@ -38,10 +37,10 @@ def criar_driver():
     options.add_argument("--disable-extensions")
     options.add_argument("--disable-software-rasterizer")
     options.add_argument("--blink-settings=imagesEnabled=false")
-    options.add_argument("--log-level=3") # Suprime logs desnecessários do Chrome
+    options.add_argument("--log-level=3") 
     
     return webdriver.Chrome(
-        service=Service(ChromeDriverManager().install()),
+        service=Service(ChromeDriverManager(chrome_type=ChromeType.CHROMIUM).install()),
         options=options
     )
 
@@ -64,28 +63,23 @@ def coletar_dados():
     try:
         driver.get("https://global.gamefik.com/login")
 
-        # 1. Tela de E-mail
         email_input = esperar(driver, By.CSS_SELECTOR, 'input[type="email"], input[type="text"]')
         email_input.send_keys(EMAIL)
         driver.find_element(By.CSS_SELECTOR, 'button[type="submit"]').click()
 
-        # 2. Tela de Opções -> Selecionar "Entrar com senha"
         btn_senha = esperar(driver, By.XPATH, "//*[contains(text(), 'Entrar com senha')]")
         btn_senha.click()
 
-        # 3. Tela de Senha
         senha_input = esperar(driver, By.CSS_SELECTOR, 'input[type="password"]')
         senha_input.send_keys(SENHA)
         driver.find_element(By.CSS_SELECTOR, 'button[type="submit"]').click()
 
-        # Validação de saída da tela de login
         try:
             WebDriverWait(driver, 20).until(lambda d: "/login" not in d.current_url)
         except Exception:
             logging.error(f"Falha no login. URL atual: {driver.current_url}")
             return []
 
-        # Extração
         driver.get("https://global.gamefik.com/players")
         
         WebDriverWait(driver, 30).until(
@@ -139,8 +133,8 @@ def coletar_dados():
         driver.quit()
 
 
-def gerar_html(df):
-    dados_json = json.dumps(df.to_dict(orient="records"), ensure_ascii=False)
+def gerar_html(dados_jogadores):
+    dados_json = json.dumps(dados_jogadores, ensure_ascii=False)
 
     html_template = """<!DOCTYPE html>
 <html lang="pt-BR">
@@ -627,20 +621,21 @@ setInterval(() => location.reload(), 60000);
 
 
 def loop_atualizacao():
-    ChromeDriverManager().install()
-    logging.info("Iniciando serviço de coleta Gamefik...")
+    ChromeDriverManager(chrome_type=ChromeType.CHROMIUM).install()
+    logging.info("Iniciando serviço de coleta Gamefik sem Pandas...")
 
     while True:
         try:
             logging.info("Iniciando ciclo de coleta de dados.")
             dados = coletar_dados()
-            df = pd.DataFrame(dados)
 
-            if df.empty:
+            if not dados:
                 logging.warning("Nenhum jogador retornado ou falha no login.")
             else:
-                df = df[~df["Turma"].isin(["Tour Gameficado", "Colaboradores"])]
-                gerar_html(df)
+                turmas_ignoradas = ["Tour Gameficado", "Colaboradores"]
+                dados_filtrados = [j for j in dados if j["Turma"] not in turmas_ignoradas]
+                
+                gerar_html(dados_filtrados)
                 logging.info("Arquivo HTML gerado com sucesso.")
 
         except Exception as e:
